@@ -32,9 +32,60 @@ app.get('/health', (req, res) => {
   res.json({ status: "ok" });
 });
 
-// GET /tasks - Get all tasks
+// GET /tasks - Get all tasks with optional filtering, search, and pagination
 app.get('/tasks', (req, res) => {
-  res.json(tasks);
+  let result = [...tasks];
+
+  // Filtering by status: ?done=true or ?done=false
+  if (req.query.done !== undefined) {
+    const isDone = req.query.done.toLowerCase() === 'true';
+    result = result.filter(t => t.done === isDone);
+  }
+
+  // Search by title keyword: ?search=keyword
+  if (req.query.search) {
+    const searchTerm = req.query.search.toLowerCase();
+    result = result.filter(t => t.title.toLowerCase().includes(searchTerm));
+  }
+
+  // Pagination: ?limit=N&offset=N
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const limit = parseInt(req.query.limit, 10);
+
+  if (!isNaN(limit) && limit >= 0) {
+    result = result.slice(offset, offset + limit);
+  } else if (offset > 0) {
+    result = result.slice(offset);
+  }
+
+  res.json(result);
+});
+
+// GET /stats - Get task statistics summary
+app.get('/stats', (req, res) => {
+  const total = tasks.length;
+  const done = tasks.filter(t => t.done).length;
+  const open = total - done;
+
+  res.json({
+    total,
+    done,
+    open
+  });
+});
+
+// POST /reset - Restore tasks to initial seed data
+app.post('/reset', (req, res) => {
+  tasks = [
+    { id: 1, title: "Learn Backend Engineering", done: true },
+    { id: 2, title: "Build CRUD API", done: false },
+    { id: 3, title: "Publish to GitHub", done: false }
+  ];
+
+  res.json({
+    message: "Tasks successfully reset to initial seed data",
+    tasks
+  });
 });
 
 // GET /tasks/:id - Get a single task by ID
