@@ -6,10 +6,16 @@
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["todo", "api", "express", "crud"],
+  "keywords": [
+    "todo",
+    "api",
+    "express",
+    "crud"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "swagger-ui-express": "^5.0.1"
   }
 }
