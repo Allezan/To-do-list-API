@@ -135,68 +135,79 @@ app.get('/tasks/:id', async (req, res) => {
 });
 
 // POST /tasks - Create a new task
-app.post('/tasks', (req, res) => {
-  const { title } = req.body;
+app.post('/tasks', async (req, res) => {
+  try {
+    const { title } = req.body;
 
-  if (!title || typeof title !== 'string' || title.trim() === '') {
-    return res.status(400).json({ error: "Title is required and cannot be empty" });
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      return res.status(400).json({ error: "Title is required and cannot be empty" });
+    }
+
+    const cleanTitle = title.trim();
+    const result = await db.query(
+      'INSERT INTO tasks (title, done) VALUES ($1, FALSE) RETURNING *;',
+      [cleanTitle]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const cleanTitle = title.trim();
-  const stmt = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)');
-  const info = stmt.run(cleanTitle);
-
-  const newTask = {
-    id: Number(info.lastInsertRowid),
-    title: cleanTitle,
-    done: false
-  };
-
-  res.status(201).json(newTask);
 });
 
 // PUT /tasks/:id - Update an existing task
-app.put('/tasks/:id', (req, res) => {
-  const taskId = parseInt(req.params.id, 10);
-  const existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+app.put('/tasks/:id', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const existingRes = await db.query('SELECT * FROM tasks WHERE id = $1;', [taskId]);
 
-  if (!existingTask) {
-    return res.status(404).json({ error: `Task ${taskId} not found` });
+    if (existingRes.rows.length === 0) {
+      return res.status(404).json({ error: `Task ${taskId} not found` });
+    }
+
+    const { title, done } = req.body;
+
+    if (title === undefined && done === undefined) {
+      return res.status(400).json({ error: "At least title or done must be provided for update" });
+    }
+
+    if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
+      return res.status(400).json({ error: "Title must be a non-empty string" });
+    }
+
+    if (done !== undefined && typeof done !== 'boolean') {
+      return res.status(400).json({ error: "Done must be a boolean value (true or false)" });
+    }
+
+    const currentTask = existingRes.rows[0];
+    const newTitle = title !== undefined ? title.trim() : currentTask.title;
+    const newDone = done !== undefined ? done : currentTask.done;
+
+    const updateRes = await db.query(
+      'UPDATE tasks SET title = $1, done = $2 WHERE id = $3 RETURNING *;',
+      [newTitle, newDone, taskId]
+    );
+
+    res.json(updateRes.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const { title, done } = req.body;
-
-  if (title === undefined && done === undefined) {
-    return res.status(400).json({ error: "At least title or done must be provided for update" });
-  }
-
-  if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
-    return res.status(400).json({ error: "Title must be a non-empty string" });
-  }
-
-  if (done !== undefined && typeof done !== 'boolean') {
-    return res.status(400).json({ error: "Done must be a boolean value (true or false)" });
-  }
-
-  const newTitle = title !== undefined ? title.trim() : existingTask.title;
-  const newDone = done !== undefined ? (done ? 1 : 0) : existingTask.done;
-
-  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(newTitle, newDone, taskId);
-
-  const updatedRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-  res.json(formatTask(updatedRow));
 });
 
 // DELETE /tasks/:id - Delete a task by ID
-app.delete('/tasks/:id', (req, res) => {
-  const taskId = parseInt(req.params.id, 10);
-  const info = db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+app.delete('/tasks/:id', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const result = await db.query('DELETE FROM tasks WHERE id = $1;', [taskId]);
 
-  if (info.changes === 0) {
-    return res.status(404).json({ error: `Task ${taskId} not found` });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: `Task ${taskId} not found` });
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.status(204).send();
 });
 
 if (require.main === module) {
