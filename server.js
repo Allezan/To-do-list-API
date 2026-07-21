@@ -2,21 +2,18 @@ const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./openapi.json');
 
+const db = require('./db');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// Helper function to map SQLite integer (0/1) to JavaScript boolean (false/true)
+const formatTask = (row) => row ? { ...row, done: Boolean(row.done) } : null;
+
 // Serve Swagger UI documentation
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
-
-// In-memory database of tasks
-let initialTasks = [
-  { id: 1, title: "Learn Backend Engineering", done: true },
-  { id: 2, title: "Build CRUD API", done: false },
-  { id: 3, title: "Publish to GitHub", done: false }
-];
-let tasks = [...initialTasks];
 
 // Root endpoint - API info
 app.get('/', (req, res) => {
@@ -34,37 +31,49 @@ app.get('/health', (req, res) => {
 
 // GET /tasks - Get all tasks with optional filtering, search, and pagination
 app.get('/tasks', (req, res) => {
-  let result = [...tasks];
+  let query = 'SELECT * FROM tasks';
+  const params = [];
+  const conditions = [];
 
   // Filtering by status: ?done=true or ?done=false
   if (req.query.done !== undefined) {
-    const isDone = req.query.done.toLowerCase() === 'true';
-    result = result.filter(t => t.done === isDone);
+    const isDone = req.query.done.toLowerCase() === 'true' ? 1 : 0;
+    conditions.push('done = ?');
+    params.push(isDone);
   }
 
   // Search by title keyword: ?search=keyword
   if (req.query.search) {
-    const searchTerm = req.query.search.toLowerCase();
-    result = result.filter(t => t.title.toLowerCase().includes(searchTerm));
+    conditions.push('title LIKE ?');
+    params.push(`%${req.query.search}%`);
   }
+
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+
+  query += ' ORDER BY id ASC';
 
   // Pagination: ?limit=N&offset=N
   const offset = parseInt(req.query.offset, 10) || 0;
   const limit = parseInt(req.query.limit, 10);
 
   if (!isNaN(limit) && limit >= 0) {
-    result = result.slice(offset, offset + limit);
+    query += ' LIMIT ? OFFSET ?';
+    params.push(limit, offset);
   } else if (offset > 0) {
-    result = result.slice(offset);
+    query += ' LIMIT -1 OFFSET ?';
+    params.push(offset);
   }
 
-  res.json(result);
+  const rows = db.prepare(query).all(...params);
+  res.json(rows.map(formatTask));
 });
 
 // GET /stats - Get task statistics summary
 app.get('/stats', (req, res) => {
-  const total = tasks.length;
-  const done = tasks.filter(t => t.done).length;
+  const total = db.prepare('SELECT COUNT(*) AS count FROM tasks').get().count;
+  const done = db.prepare('SELECT COUNT(*) AS count FROM tasks WHERE done = 1').get().count;
   const open = total - done;
 
   res.json({
@@ -76,28 +85,35 @@ app.get('/stats', (req, res) => {
 
 // POST /reset - Restore tasks to initial seed data
 app.post('/reset', (req, res) => {
-  tasks = [
-    { id: 1, title: "Learn Backend Engineering", done: true },
-    { id: 2, title: "Build CRUD API", done: false },
-    { id: 3, title: "Publish to GitHub", done: false }
-  ];
+  const deleteStmt = db.prepare('DELETE FROM tasks');
+  const insertStmt = db.prepare('INSERT INTO tasks (id, title, done) VALUES (?, ?, ?)');
 
+  const resetTransaction = db.transaction(() => {
+    deleteStmt.run();
+    insertStmt.run(1, 'Learn Backend Engineering', 1);
+    insertStmt.run(2, 'Build CRUD API', 0);
+    insertStmt.run(3, 'Publish to GitHub', 0);
+  });
+
+  resetTransaction();
+
+  const tasks = db.prepare('SELECT * FROM tasks ORDER BY id ASC').all();
   res.json({
     message: "Tasks successfully reset to initial seed data",
-    tasks
+    tasks: tasks.map(formatTask)
   });
 });
 
 // GET /tasks/:id - Get a single task by ID
 app.get('/tasks/:id', (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const task = tasks.find(t => t.id === taskId);
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
 
-  if (!task) {
+  if (!row) {
     return res.status(404).json({ error: `Task ${taskId} not found` });
   }
 
-  res.json(task);
+  res.json(formatTask(row));
 });
 
 // POST /tasks - Create a new task
