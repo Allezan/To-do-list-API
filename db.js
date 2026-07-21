@@ -1,41 +1,46 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+require('dotenv').config();
+const { Pool } = require('pg');
 
-const dbPath = path.join(__dirname, 'tasks.db');
-const db = new Database(dbPath);
+const connectionString = process.env.DATABASE_URL || 'postgres://postgres:dev@localhost:5432/tasks';
 
-// Enable Write-Ahead Logging for better concurrency
-db.pragma('journal_mode = WAL');
+const pool = new Pool({
+  connectionString,
+});
 
-// Initialize tasks table if it does not exist
-const initDb = () => {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      done INTEGER NOT NULL DEFAULT 0
-    )
-  `);
+// Auto-initialize PostgreSQL database schema and seed data
+const initDb = async () => {
+  try {
+    // Create tasks table if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        done BOOLEAN NOT NULL DEFAULT FALSE
+      );
+    `);
 
-  // Seed default 3 tasks ONLY if table is empty
-  const countRow = db.prepare('SELECT COUNT(*) AS count FROM tasks').get();
+    // Seed 3 example tasks ONLY if table is empty
+    const countRes = await pool.query('SELECT COUNT(*) FROM tasks;');
+    const rowCount = parseInt(countRes.rows[0].count, 10);
 
-  if (countRow.count === 0) {
-    const insert = db.prepare('INSERT INTO tasks (title, done) VALUES (?, ?)');
-    const seedMany = db.transaction((seedItems) => {
-      for (const item of seedItems) {
-        insert.run(item.title, item.done);
-      }
-    });
-
-    seedMany([
-      { title: 'Learn Backend Engineering', done: 1 },
-      { title: 'Build CRUD API', done: 0 },
-      { title: 'Publish to GitHub', done: 0 }
-    ]);
+    if (rowCount === 0) {
+      await pool.query(`
+        INSERT INTO tasks (title, done) VALUES
+        ('Learn Backend Engineering', TRUE),
+        ('Build CRUD API', FALSE),
+        ('Publish to GitHub', FALSE);
+      `);
+      console.log('PostgreSQL database seeded with initial 3 tasks.');
+    }
+  } catch (err) {
+    console.error('Error initializing PostgreSQL database:', err.message);
   }
 };
 
+// Run initialization
 initDb();
 
-module.exports = db;
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool
+};
