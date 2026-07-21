@@ -140,9 +140,9 @@ app.post('/tasks', (req, res) => {
 // PUT /tasks/:id - Update an existing task
 app.put('/tasks/:id', (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const taskIndex = tasks.findIndex(t => t.id === taskId);
+  const existingTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
 
-  if (taskIndex === -1) {
+  if (!existingTask) {
     return res.status(404).json({ error: `Task ${taskId} not found` });
   }
 
@@ -160,26 +160,24 @@ app.put('/tasks/:id', (req, res) => {
     return res.status(400).json({ error: "Done must be a boolean value (true or false)" });
   }
 
-  if (title !== undefined) {
-    tasks[taskIndex].title = title.trim();
-  }
-  if (done !== undefined) {
-    tasks[taskIndex].done = done;
-  }
+  const newTitle = title !== undefined ? title.trim() : existingTask.title;
+  const newDone = done !== undefined ? (done ? 1 : 0) : existingTask.done;
 
-  res.json(tasks[taskIndex]);
+  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(newTitle, newDone, taskId);
+
+  const updatedRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  res.json(formatTask(updatedRow));
 });
 
 // DELETE /tasks/:id - Delete a task by ID
 app.delete('/tasks/:id', (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const taskIndex = tasks.findIndex(t => t.id === taskId);
+  const info = db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 
-  if (taskIndex === -1) {
+  if (info.changes === 0) {
     return res.status(404).json({ error: `Task ${taskId} not found` });
   }
 
-  tasks.splice(taskIndex, 1);
   res.status(204).send();
 });
 
