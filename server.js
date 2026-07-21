@@ -62,6 +62,52 @@ app.post('/tasks', (req, res) => {
   res.status(201).json(newTask);
 });
 
+// PUT /tasks/:id - Update an existing task
+app.put('/tasks/:id', (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  const taskIndex = tasks.findIndex(t => t.id === taskId);
+
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: `Task ${taskId} not found` });
+  }
+
+  const { title, done } = req.body;
+
+  if (title === undefined && done === undefined) {
+    return res.status(400).json({ error: "At least title or done must be provided for update" });
+  }
+
+  if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
+    return res.status(400).json({ error: "Title must be a non-empty string" });
+  }
+
+  if (done !== undefined && typeof done !== 'boolean') {
+    return res.status(400).json({ error: "Done must be a boolean value (true or false)" });
+  }
+
+  if (title !== undefined) {
+    tasks[taskIndex].title = title.trim();
+  }
+  if (done !== undefined) {
+    tasks[taskIndex].done = done;
+  }
+
+  res.json(tasks[taskIndex]);
+});
+
+// DELETE /tasks/:id - Delete a task by ID
+app.delete('/tasks/:id', (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  const taskIndex = tasks.findIndex(t => t.id === taskId);
+
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: `Task ${taskId} not found` });
+  }
+
+  tasks.splice(taskIndex, 1);
+  res.status(204).send();
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
