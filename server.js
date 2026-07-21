@@ -24,96 +24,114 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: "ok" });
+// Health check endpoint (includes DB health check)
+app.get('/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1;');
+    res.json({ status: "ok", db: "ok" });
+  } catch (err) {
+    res.status(500).json({ status: "error", db: err.message });
+  }
 });
 
 // GET /tasks - Get all tasks with optional filtering, search, and pagination
-app.get('/tasks', (req, res) => {
-  let query = 'SELECT * FROM tasks';
-  const params = [];
-  const conditions = [];
+app.get('/tasks', async (req, res) => {
+  try {
+    let query = 'SELECT * FROM tasks';
+    const params = [];
+    const conditions = [];
 
-  // Filtering by status: ?done=true or ?done=false
-  if (req.query.done !== undefined) {
-    const isDone = req.query.done.toLowerCase() === 'true' ? 1 : 0;
-    conditions.push('done = ?');
-    params.push(isDone);
+    // Filtering by status: ?done=true or ?done=false
+    if (req.query.done !== undefined) {
+      const isDone = req.query.done.toLowerCase() === 'true';
+      params.push(isDone);
+      conditions.push(`done = $${params.length}`);
+    }
+
+    // Search by title keyword: ?search=keyword
+    if (req.query.search) {
+      params.push(`%${req.query.search}%`);
+      conditions.push(`title ILIKE $${params.length}`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' ORDER BY id ASC';
+
+    // Pagination: ?limit=N&offset=N
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const limit = parseInt(req.query.limit, 10);
+
+    if (!isNaN(limit) && limit >= 0) {
+      params.push(limit);
+      query += ` LIMIT $${params.length}`;
+      params.push(offset);
+      query += ` OFFSET $${params.length}`;
+    } else if (offset > 0) {
+      params.push(offset);
+      query += ` OFFSET $${params.length}`;
+    }
+
+    const result = await db.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  // Search by title keyword: ?search=keyword
-  if (req.query.search) {
-    conditions.push('title LIKE ?');
-    params.push(`%${req.query.search}%`);
-  }
-
-  if (conditions.length > 0) {
-    query += ' WHERE ' + conditions.join(' AND ');
-  }
-
-  query += ' ORDER BY id ASC';
-
-  // Pagination: ?limit=N&offset=N
-  const offset = parseInt(req.query.offset, 10) || 0;
-  const limit = parseInt(req.query.limit, 10);
-
-  if (!isNaN(limit) && limit >= 0) {
-    query += ' LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-  } else if (offset > 0) {
-    query += ' LIMIT -1 OFFSET ?';
-    params.push(offset);
-  }
-
-  const rows = db.prepare(query).all(...params);
-  res.json(rows.map(formatTask));
 });
 
 // GET /stats - Get task statistics summary
-app.get('/stats', (req, res) => {
-  const total = db.prepare('SELECT COUNT(*) AS count FROM tasks').get().count;
-  const done = db.prepare('SELECT COUNT(*) AS count FROM tasks WHERE done = 1').get().count;
-  const open = total - done;
+app.get('/stats', async (req, res) => {
+  try {
+    const totalRes = await db.query('SELECT COUNT(*) FROM tasks;');
+    const doneRes = await db.query('SELECT COUNT(*) FROM tasks WHERE done = TRUE;');
 
-  res.json({
-    total,
-    done,
-    open
-  });
+    const total = parseInt(totalRes.rows[0].count, 10);
+    const done = parseInt(doneRes.rows[0].count, 10);
+    const open = total - done;
+
+    res.json({ total, done, open });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /reset - Restore tasks to initial seed data
-app.post('/reset', (req, res) => {
-  const deleteStmt = db.prepare('DELETE FROM tasks');
-  const insertStmt = db.prepare('INSERT INTO tasks (id, title, done) VALUES (?, ?, ?)');
+app.post('/reset', async (req, res) => {
+  try {
+    await db.query('TRUNCATE TABLE tasks RESTART IDENTITY;');
+    await db.query(`
+      INSERT INTO tasks (id, title, done) VALUES
+      (1, 'Learn Backend Engineering', TRUE),
+      (2, 'Build CRUD API', FALSE),
+      (3, 'Publish to GitHub', FALSE);
+    `);
 
-  const resetTransaction = db.transaction(() => {
-    deleteStmt.run();
-    insertStmt.run(1, 'Learn Backend Engineering', 1);
-    insertStmt.run(2, 'Build CRUD API', 0);
-    insertStmt.run(3, 'Publish to GitHub', 0);
-  });
-
-  resetTransaction();
-
-  const tasks = db.prepare('SELECT * FROM tasks ORDER BY id ASC').all();
-  res.json({
-    message: "Tasks successfully reset to initial seed data",
-    tasks: tasks.map(formatTask)
-  });
+    const result = await db.query('SELECT * FROM tasks ORDER BY id ASC;');
+    res.json({
+      message: "Tasks successfully reset to initial seed data",
+      tasks: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /tasks/:id - Get a single task by ID
-app.get('/tasks/:id', (req, res) => {
-  const taskId = parseInt(req.params.id, 10);
-  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+app.get('/tasks/:id', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const result = await db.query('SELECT * FROM tasks WHERE id = $1;', [taskId]);
 
-  if (!row) {
-    return res.status(404).json({ error: `Task ${taskId} not found` });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Task ${taskId} not found` });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json(formatTask(row));
 });
 
 // POST /tasks - Create a new task
