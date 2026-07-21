@@ -1,39 +1,50 @@
-# To-Do List RESTful CRUD API (SQLite Persistence Edition)
+# To-Do List RESTful CRUD API (Containerized PostgreSQL Edition)
 
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-brightgreen)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-v4.21.2-blue)](https://expressjs.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite)](https://www.sqlite.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-v16_Alpine-4169E1?logo=postgresql)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose_v2-2496ED?logo=docker)](https://www.docker.com/)
 [![Swagger UI](https://img.shields.io/badge/Swagger_UI-v5-green)](http://localhost:3000/docs)
 [![License](https://img.shields.io/badge/License-ISC-purple)](#)
 
-A robust, database-backed RESTful To-Do List CRUD API built as part of the **FlyRank Backend Engineering Internship (Week 3 Assignment A2)**. 
+A production-ready, fully containerized RESTful To-Do List CRUD API built for the **FlyRank Backend Engineering Internship (Week 3 Assignment A3: Containerize your stack)**.
 
-This project upgrades our Week 2 in-memory API to store all tasks in a local **SQLite database (`tasks.db`)**. Endpoints and HTTP contracts remain **100% identical**, but data now **survives server restarts**.
-
----
-
-## 🗄️ Why SQLite?
-
-- **Zero Setup / Serverless**: SQLite runs in-process inside Node.js. No standalone database server (like Postgres or MySQL) needs to be installed or configured.
-- **Single File Storage**: All data lives in a local file named `tasks.db` created automatically on first run.
-- **Persistence Across Restarts**: Unlike in-memory arrays, tasks created, updated, or deleted persist permanently on disk.
-- **Git Hygiene**: `tasks.db` is added to `.gitignore` so each clone starts fresh with automatic schema creation and 1-time seed data.
+This project wraps our Express API and a real **PostgreSQL database** into isolated Docker containers orchestrated with Docker Compose. With a single command, the entire multi-container stack builds, connects, auto-seeds, and persists data across restarts using a named Docker volume (`taskdata`).
 
 ---
 
-## 🚀 Quick Start
+## 🏗️ Architecture & Features
+
+- **Multi-Container Stack**: Node.js Express API (`api`) + PostgreSQL 16 Alpine (`db`).
+- **One-Command Environment**: Run the whole stack with `docker compose up -d --build`.
+- **Zero Credentials in Code**: Database connection secrets live in `.env` (git-ignored), while `.env.example` provides the committed template.
+- **Service Dependency & Health Check**: The API container waits for Postgres to be fully operational via `pg_isready` health check.
+- **Database Connection Pool**: Managed via `pg.Pool` with parameterized SQL queries (`$1`, `$2`).
+- **Data Persistence**: Backed by a named Docker volume `taskdata` (`/var/lib/postgresql/data`).
+- **Multi-Stage Dockerfile**: Reduces container footprint by separating build-time dependencies from production runtimes.
+- **Interactive API Documentation**: Live Swagger UI served at `http://localhost:3000/docs`.
+
+---
+
+## 🚀 Quick Start (One Command)
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- `npm` (comes with Node.js)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
 
-### Installation & Run Command (One-Liner)
-
+### 1. Clone & Setup Environment File
 ```bash
-npm install && npm start
+cp .env.example .env
 ```
 
-On first startup, the server automatically creates `tasks.db`, initializes the `tasks` table, seeds 3 default tasks, and listens at `http://localhost:3000`.
+### 2. Start the Entire Stack
+```bash
+docker compose up -d --build
+```
+
+The system will:
+1. Pull `postgres:16-alpine` and initialize the database `tasks`.
+2. Wait until PostgreSQL is healthy (`pg_isready`).
+3. Build the Node.js Express multi-stage Docker image and start the server at `http://localhost:3000`.
 
 ---
 
@@ -42,24 +53,39 @@ On first startup, the server automatically creates `tasks.db`, initializes the `
 | Method | Endpoint | Description | Request Body | Response Status Codes |
 |---|---|---|---|---|
 | `GET` | `/` | API Metadata & Endpoint list | N/A | `200 OK` |
-| `GET` | `/health` | Server health check status | N/A | `200 OK` |
+| `GET` | `/health` | Application & Database Health Check | N/A | `200 OK` (with `{ status: "ok", db: "ok" }`), `500` |
 | `GET` | `/tasks` | List tasks (supports `done`, `search`, `limit`, `offset`) | N/A | `200 OK` |
 | `GET` | `/tasks/:id` | Get single task by ID | N/A | `200 OK`, `404 Not Found` |
 | `POST` | `/tasks` | Create a new task | `{ "title": "Buy milk" }` | `201 Created`, `400 Bad Request` |
 | `PUT` | `/tasks/:id` | Update task title and/or done status | `{ "title": "...", "done": true }` | `200 OK`, `400 Bad Request`, `404 Not Found` |
 | `DELETE` | `/tasks/:id` | Remove task by ID | N/A | `204 No Content`, `404 Not Found` |
-| `GET` | `/stats` | Task statistics (`SELECT COUNT(*)`) | N/A | `200 OK` |
-| `POST` | `/reset` | Reset database table back to initial 3 seed items | N/A | `200 OK` |
+| `GET` | `/stats` | Task statistics (`COUNT(*)` SQL aggregation) | N/A | `200 OK` |
+| `POST` | `/reset` | Truncate and re-seed initial tasks | N/A | `200 OK` |
 
 ---
 
-## 🧪 Sample `curl -i` Execution & Persistence Check
+## 🧪 Sample `curl -i` Execution & Response Outputs
 
-### 1. Read All Tasks from SQLite (`GET /tasks`)
+### 1. Enhanced Stack Health Check (`GET /health`)
+```bash
+curl -i http://localhost:3000/health
+```
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{
+  "status": "ok",
+  "db": "ok"
+}
+```
+
+### 2. List Tasks (`GET /tasks`)
 ```bash
 curl -i http://localhost:3000/tasks
 ```
-**Response Output:**
+**Response:**
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
@@ -71,79 +97,82 @@ Content-Type: application/json; charset=utf-8
 ]
 ```
 
-### 2. Insert Task into SQLite (`POST /tasks`)
+### 3. Create Task (`POST /tasks`)
 ```bash
 curl -i -X POST http://localhost:3000/tasks \
   -H "Content-Type: application/json" \
-  -d '{"title": "Persistent SQLite Task"}'
+  -d '{"title": "Docker Compose Task"}'
 ```
-**Response Output:**
+**Response:**
 ```http
 HTTP/1.1 201 Created
 Content-Type: application/json; charset=utf-8
 
 {
   "id": 4,
-  "title": "Persistent SQLite Task",
+  "title": "Docker Compose Task",
   "done": false
 }
 ```
 
-### 3. Verification of Data Persistence Across Restarts
-1. Create a task via `POST /tasks` (returns ID `4`).
-2. Stop the Node server (`Ctrl+C`).
-3. Restart the server (`npm start`).
-4. Execute `curl -i http://localhost:3000/tasks/4`.
-5. **Result**: Task `4` is still returned with status `200 OK`! 🎉
-
----
-
-## 📊 Stage 4: Manual SQL Query Exploration
-
-Direct SQL queries were executed against `tasks.db` using SQLite prepared statements:
-
-```sql
--- 1. List every task
-SELECT * FROM tasks;
--- Returns rows: [{ id: 1, title: 'Learn Backend Engineering', done: 1 }, ...]
-
--- 2. Filter completed tasks
-SELECT * FROM tasks WHERE done = 1;
--- Returns rows where completion status is 1 (true).
-
--- 3. Aggregate total count
-SELECT COUNT(*) AS count FROM tasks;
--- Returns total row count: { count: 3 }
+### 4. Delete Task (`DELETE /tasks/4`)
+```bash
+curl -i -X DELETE http://localhost:3000/tasks/4
+```
+**Response:**
+```http
+HTTP/1.1 204 No Content
 ```
 
 ---
 
-## 📖 Interactive Swagger UI Documentation
+## 🔍 Database Inspection inside Container
 
-Swagger UI is served live at: **[http://localhost:3000/docs](http://localhost:3000/docs)**.
+You can inspect the live PostgreSQL database inside the container using `psql`:
+
+```bash
+docker exec -it todo-api-stack-db-1 psql -U postgres -d tasks -c "\dt"
+docker exec -it todo-api-stack-db-1 psql -U postgres -d tasks -c "SELECT * FROM tasks;"
+```
 
 ---
 
-## 🤖 Stage 6: AI vs Me Comparison (Database Edition)
+## 📦 Container Optimization & Persistence Verification
 
-In Stage 6, we prompted an AI assistant to migrate the API to SQLite (`ai-version/server.js`) and compared it against our hand-built implementation using `git diff --no-index server.js ai-version/server.js`.
+### 1. Data Persistence Across `down` & `up`
+- Create a task via `POST /tasks`.
+- Run `docker compose down` (stops and removes containers and network).
+- Run `docker compose up -d` (re-creates stack).
+- Run `curl http://localhost:3000/tasks`.
+- **Result**: The created task is still present because the named volume `taskdata` persists the PostgreSQL data directory `/var/lib/postgresql/data`.
+
+### 2. Multi-Stage Build Optimization
+- Stage 1 (`builder`): Installs production dependencies with `npm ci --only=production`.
+- Stage 2 (`runner`): Copies compiled `node_modules` into a clean `node:18-alpine` runtime image, reducing deployment size and security attack surface.
+
+---
+
+## 🤖 Stage 6: AI vs Me Comparison (Containerization Edition)
+
+In Stage 6, we prompted an AI assistant to containerize the Express API with PostgreSQL (`ai-version/server.js`) and compared it against our hand-built stack.
 
 ### 1. What did the AI do better?
-- The AI wrote compact single-line database queries directly in the route handlers, making the initial file short.
+- The AI wrote a very short `server.js` file by combining table initialization and route handlers into a single file.
 
-### 2. What did it get wrong or quietly ignore?
-- **SQL Injection Vulnerability**: In `GET /tasks/:id`, the AI concatenated user input directly into the SQL string:
+### 2. What did it get wrong or ignore?
+- **SQL Injection Vulnerability**: In `GET /tasks/:id`, the AI concatenated raw parameters into the SQL query:
   ```javascript
   // ❌ Dangerous AI code:
-  db.prepare('SELECT * FROM tasks WHERE id = ' + req.params.id).get();
+  client.query(`SELECT * FROM tasks WHERE id = ${req.params.id}`);
   ```
-  Our hand-built version strictly uses **parameterized queries (`?`)**:
+  Our implementation strictly uses **parameterized placeholders (`$1`)**:
   ```javascript
   // ✅ Safe hand-built code:
-  db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  db.query('SELECT * FROM tasks WHERE id = $1;', [taskId]);
   ```
-- **Type Leaks (Integers vs Booleans)**: SQLite stores booleans as `0` or `1`. The AI returned raw `0`/`1` integers to API clients, breaking the original Week 2 API contract. Our version includes a `formatTask()` mapper converting `0`/`1` back to clean JavaScript `true`/`false` booleans.
-- **Missing Transactions & WAL Mode**: The AI inserted seed rows individually without a transaction (`db.transaction()`) and did not enable WAL mode (`journal_mode = WAL`), leading to slower database performance under concurrent writes.
+- **Single Client vs Connection Pool**: The AI used `new Client()` instead of `new Pool()`. A single client cannot handle concurrent HTTP requests and crashes if the connection drops.
+- **Incomplete Health Check**: The AI's `GET /health` returned `{ status: "ok" }` without pinging PostgreSQL (`SELECT 1`), defeating the purpose of a container stack health check.
+- **Container Race Condition**: The AI did not include `pg_isready` healthcheck conditions in Docker Compose, causing the API container to crash repeatedly if it starts before Postgres is ready to accept socket connections.
 
 ### 3. Key Takeaway
-> *"Swapping the storage layer should be invisible to your API clients. Using parameterized queries guarantees database security while maintaining 100% backward compatibility."*
+> *"Containerization makes deployment reproducible across machines, but application resilience depends on proper connection pooling, parameterized queries, and database healthchecks."*

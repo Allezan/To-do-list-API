@@ -1,58 +1,70 @@
+require('dotenv').config();
 const express = require('express');
-const Database = require('better-sqlite3');
+const { Client } = require('pg');
 
 const app = express();
 app.use(express.json());
 
-const db = new Database('ai_tasks.db');
+// AI Flaw 1: Using single Client connection instead of connection Pool (crashes on reconnect / high concurrency)
+// AI Flaw 2: Hardcoded connection string fallback to localhost instead of container service name 'db'
+const client = new Client({
+  connectionString: process.env.DATABASE_URL || 'postgres://postgres:dev@localhost:5432/tasks'
+});
 
-// AI generated table initialization (without transaction or WAL mode)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT,
-    done INTEGER DEFAULT 0
-  );
-`);
-
-// AI seed check (simple row count check)
-const count = db.prepare('SELECT COUNT(*) as c FROM tasks').get().c;
-if (count === 0) {
-  db.prepare('INSERT INTO tasks (title, done) VALUES ("Learn Backend Engineering", 1)').run();
-  db.prepare('INSERT INTO tasks (title, done) VALUES ("Build CRUD API", 0)').run();
-  db.prepare('INSERT INTO tasks (title, done) VALUES ("Publish to GitHub", 0)').run();
+async function init() {
+  await client.connect();
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      title TEXT,
+      done BOOLEAN DEFAULT FALSE
+    );
+  `);
+  
+  const count = await client.query('SELECT COUNT(*) FROM tasks');
+  if (parseInt(count.rows[0].count) === 0) {
+    // AI Flaw 3: Non-parameterized seed string
+    await client.query("INSERT INTO tasks (title, done) VALUES ('Learn Backend', true), ('Build API', false), ('Publish', false)");
+  }
 }
 
-app.get('/tasks', (req, res) => {
-  const tasks = db.prepare('SELECT * FROM tasks').all();
-  res.json(tasks);
+init().catch(console.error);
+
+app.get('/health', async (req, res) => {
+  res.json({ status: "ok" }); // AI Flaw 4: Health check doesn't ping DB
 });
 
-app.get('/tasks/:id', (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ' + req.params.id).get(); // AI flaw: String concatenation vulnerability!
-  if (!task) return res.status(404).json({ error: "Task not found" });
-  res.json(task);
+app.get('/tasks', async (req, res) => {
+  const result = await client.query('SELECT * FROM tasks');
+  res.json(result.rows);
 });
 
-app.post('/tasks', (req, res) => {
-  if (!req.body.title) return res.status(400).json({ error: "Title required" });
-  const info = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)').run(req.body.title);
-  res.status(201).json({ id: info.lastInsertRowid, title: req.body.title, done: 0 });
+app.get('/tasks/:id', async (req, res) => {
+  const result = await client.query(`SELECT * FROM tasks WHERE id = ${req.params.id}`); // AI Flaw 5: SQL Injection vulnerability!
+  if (result.rows.length === 0) return res.status(404).json({ error: "Task not found" });
+  res.json(result.rows[0]);
 });
 
-app.put('/tasks/:id', (req, res) => {
-  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(req.body.title, req.body.done ? 1 : 0, req.params.id);
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-  res.json(updated);
+app.post('/tasks', async (req, res) => {
+  if (!req.body.title) return res.status(400).json({ error: "Title is required" });
+  const result = await client.query('INSERT INTO tasks (title, done) VALUES ($1, false) RETURNING *', [req.body.title]);
+  res.status(201).json(result.rows[0]);
 });
 
-app.delete('/tasks/:id', (req, res) => {
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+app.put('/tasks/:id', async (req, res) => {
+  const result = await client.query('UPDATE tasks SET title = $1, done = $2 WHERE id = $3 RETURNING *', [req.body.title, req.body.done, req.params.id]);
+  if (result.rows.length === 0) return res.status(404).json({ error: "Task not found" });
+  res.json(result.rows[0]);
+});
+
+app.delete('/tasks/:id', async (req, res) => {
+  const result = await client.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
+  if (result.rowCount === 0) return res.status(404).json({ error: "Task not found" });
   res.status(204).send();
 });
 
 if (require.main === module) {
-  app.listen(3001, () => console.log('AI SQLite API listening on port 3001'));
+  app.listen(3000, () => console.log('AI Express Postgres running on port 3000'));
 }
 
 module.exports = app;

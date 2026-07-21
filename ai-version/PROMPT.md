@@ -1,18 +1,15 @@
-# Week 3 AI Rematch Prompt: SQLite Database Migration
+# Assignment A3 AI Rematch Prompt: Containerize Your Stack (PostgreSQL & Docker Compose)
 
 ## Prompt Sent to AI Assistant
 
 ```text
-Migrate the Express To-Do List CRUD API from in-memory storage to a persistent SQLite database using `better-sqlite3`.
+Containerize the Express To-Do List CRUD API with a PostgreSQL database using Docker and Docker Compose.
 
 Requirements:
-1. Create a `tasks.db` database file on startup.
-2. Ensure a `tasks` table exists with columns: `id` (INTEGER PRIMARY KEY AUTOINCREMENT), `title` (TEXT NOT NULL), and `done` (INTEGER DEFAULT 0).
-3. Seed 3 default tasks ONLY if the `tasks` table is currently empty (`SELECT COUNT(*) FROM tasks` returns 0).
-4. Update all 5 core endpoints to execute SQL with parameterized queries (`?` placeholders):
-   - GET /tasks: `SELECT * FROM tasks`
-   - GET /tasks/:id: `SELECT * FROM tasks WHERE id = ?`. Return 404 with error JSON if not found.
-   - POST /tasks: `INSERT INTO tasks (title, done) VALUES (?, 0)`. Validate non-empty title (return 400 Bad Request if missing/invalid). Return 201 Created with new task.
-   - PUT /tasks/:id: `UPDATE tasks SET title = ?, done = ? WHERE id = ?`. Validate 400 for empty/invalid body, 404 for unknown ID. Return updated task.
-   - DELETE /tasks/:id: `DELETE FROM tasks WHERE id = ?`. Return 204 No Content. Return 404 for unknown ID.
+1. Create a `compose.yaml` defining two services: `api` (the Node.js app) and `db` (the official `postgres:16-alpine` image).
+2. Store database credentials in a git-ignored `.env` file (e.g. `DATABASE_URL=postgres://postgres:dev@db:5432/tasks`), and provide a `.env.example` file.
+3. Attach a named Docker volume (`taskdata`) to the PostgreSQL service so data persists across `docker compose down` and `up`.
+4. Add a healthcheck (`pg_isready`) to the `db` service and use `depends_on: db: condition: service_healthy` for the `api` service.
+5. In Node.js, connect to PostgreSQL using `pg` (node-postgres). Auto-create the `tasks` table if it doesn't exist and seed 3 default tasks if the table is empty.
+6. Support all 5 core endpoints (`GET /tasks`, `GET /tasks/:id`, `POST /tasks`, `PUT /tasks/:id`, `DELETE /tasks/:id`) and `GET /health` using parameterized SQL queries (`$1` placeholders).
 ```
