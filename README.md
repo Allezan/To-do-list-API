@@ -168,6 +168,28 @@ Content-Type: application/json; charset=utf-8
 
 ---
 
+## 📊 Stage 4: Manual SQL Exploration
+
+Direct SQL queries were executed against `tasks.db` to verify single-source-of-truth consistency:
+
+```sql
+-- 1. List every task
+SELECT * FROM tasks;
+-- Returns 3 rows: [{ id: 1, title: 'Master SQLite Backend', done: 1 }, ...]
+
+-- 2. Filter completed tasks
+SELECT * FROM tasks WHERE done = 1;
+-- Returns rows where completion status is 1 (true).
+
+-- 3. Aggregate total count
+SELECT COUNT(*) AS count FROM tasks;
+-- Returns total row count: { count: 3 }
+```
+
+> **Observation**: Changes made directly in SQLite reflect instantly in the API responses without restarting the server because both DB tools and Express read from the exact same `tasks.db` file.
+
+---
+
 ## 📖 Interactive Swagger UI Documentation
 
 Swagger UI is served directly at: **[http://localhost:3000/docs](http://localhost:3000/docs)**.
